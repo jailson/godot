@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "rasterizer_gles3.h"
+#include "shader_gles3.h"
 
 #ifdef GLES3_ENABLED
 
@@ -101,6 +102,8 @@ bool RasterizerGLES3::screen_flipped_y = false;
 void RasterizerGLES3::begin_frame(double frame_step) {
 	frame++;
 	delta = frame_step;
+
+	ShaderGLES3::poll_compiling(); // web-tuning: programs that got ready in the background
 
 	time_total += frame_step;
 

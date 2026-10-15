@@ -437,6 +437,7 @@ void ShaderGLES3::_compile_specialization(Version::Specialization &spec, uint32_
 		// web-tuning: don't wait for it (asking now would freeze until it's done).
 		spec.compiling = true;
 		_count_compiling(1);
+		compiling_list.push_back({ this, p_version, int(p_variant), p_specialization });
 		return;
 	}
 	_finish_specialization(spec, p_version);
@@ -447,6 +448,26 @@ void ShaderGLES3::_compile_specialization(Version::Specialization &spec, uint32_
 #endif
 
 int ShaderGLES3::compiling_count = 0;
+LocalVector<ShaderGLES3::Compiling> ShaderGLES3::compiling_list;
+
+void ShaderGLES3::poll_compiling() {
+	for (uint32_t i = 0; i < compiling_list.size();) {
+		const Compiling &entry = compiling_list[i];
+		Version *version = entry.version;
+		Version::Specialization *spec = nullptr;
+		if (entry.variant < int(version->variants.size())) {
+			spec = version->variants[entry.variant].getptr(entry.specialization);
+		}
+		if (spec && spec->compiling) {
+			entry.shader->_specialization_ready(*spec, version);
+		}
+		if (!spec || !spec->compiling) {
+			compiling_list.remove_at_unordered(i); // (ready, failed, or gone)
+		} else {
+			i++;
+		}
+	}
+}
 
 // (Scripts read it as ProjectSettings.get_meta("shaders_compiling", 0): to wait for them behind a curtain.)
 void ShaderGLES3::_count_compiling(int p_change) {
@@ -757,6 +778,12 @@ void ShaderGLES3::_clear_version(Version *p_version) {
 		for (KeyValue<uint64_t, Version::Specialization> &kv : p_version->variants[i]) {
 			if (kv.value.compiling) {
 				_count_compiling(-1); // web-tuning
+				for (uint32_t j = 0; j < compiling_list.size(); j++) {
+					if (compiling_list[j].version == p_version && compiling_list[j].variant == i && compiling_list[j].specialization == kv.key) {
+						compiling_list.remove_at_unordered(j);
+						break;
+					}
+				}
 			}
 			if (kv.value.id != 0) {
 				glDeleteShader(kv.value.vert_id);
@@ -776,6 +803,18 @@ void ShaderGLES3::_initialize_version(Version *p_version) {
 		return;
 	}
 	p_version->variants.reserve(variant_count);
+#ifdef WEB_ENABLED
+	if (parallel_compile) {
+		// web-tuning: each variant is compiled when it's first drawn, not all of them now.
+		// A material drawn for the first time compiled every variant of its shader (color,
+		// depth, shadow, with and without instancing...), about ten programs, most never
+		// used: seconds on a phone. (Natively they go in the shader cache; the web has none.)
+		for (int i = 0; i < variant_count; i++) {
+			p_version->variants.push_back(AHashMap<uint64_t, Version::Specialization>());
+		}
+		return;
+	}
+#endif
 	for (int i = 0; i < variant_count; i++) {
 		p_version->variants.push_back(AHashMap<uint64_t, Version::Specialization>());
 		Version::Specialization spec;

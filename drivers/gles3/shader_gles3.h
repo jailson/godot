@@ -116,6 +116,15 @@ private:
 	bool parallel_compile = false;
 	static int compiling_count;
 	static void _count_compiling(int p_change);
+	// web-tuning: every program compiling in the background, looked at every frame
+	// (poll_compiling): one nothing tries to draw anymore would otherwise never finish.
+	struct Compiling {
+		ShaderGLES3 *shader;
+		Version *version;
+		int variant;
+		uint64_t specialization;
+	};
+	static LocalVector<Compiling> compiling_list;
 
 	void _clear_version(Version *p_version);
 	void _initialize_version(Version *p_version);
@@ -211,6 +220,7 @@ protected:
 				_compile_specialization(s, p_variant, version, p_specialization);
 				version->variants[p_variant].insert(p_specialization, s);
 				spec = version->variants[p_variant].getptr(p_specialization);
+
 				if (shader_cache_dir_valid) {
 					_save_to_cache(version);
 				}
@@ -254,6 +264,8 @@ public:
 	void set_parallel_compile(bool p_enable);
 	// web-tuning: how many programs are compiling in the background right now.
 	static int get_compiling_count() { return compiling_count; }
+	// web-tuning: finishes the programs that got ready in the background (once a frame).
+	static void poll_compiling();
 
 	RID version_create();
 
