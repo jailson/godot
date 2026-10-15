@@ -95,6 +95,7 @@ private:
 			LocalVector<GLint> texture_uniform_locations;
 			bool build_queued = false;
 			bool ok = false;
+			bool compiling = false; // web-tuning: linked in the background (KHR_parallel_shader_compile), not ready yet.
 			Specialization() {
 				id = 0;
 				vert_id = 0;
@@ -107,6 +108,14 @@ private:
 
 	void _get_uniform_locations(Version::Specialization &spec, Version *p_version);
 	void _compile_specialization(Version::Specialization &spec, uint32_t p_variant, Version *p_version, uint64_t p_specialization);
+	// web-tuning: the second half of _compile_specialization, once the program has linked.
+	void _finish_specialization(Version::Specialization &spec, Version *p_version);
+	// web-tuning: whether a program compiling in the background is ready (and finishes it if so).
+	bool _specialization_ready(Version::Specialization &spec, Version *p_version);
+	// web-tuning: compile this shader's programs without waiting for them (see set_parallel_compile).
+	bool parallel_compile = false;
+	static int compiling_count;
+	static void _count_compiling(int p_change);
 
 	void _clear_version(Version *p_version);
 	void _initialize_version(Version *p_version);
@@ -211,6 +220,10 @@ protected:
 			spec = version->variants[p_variant].getptr(specialization_default_mask);
 		}
 
+		if (spec && spec->compiling && !_specialization_ready(*spec, version)) {
+			return false; // web-tuning: still compiling in the background; whatever uses it isn't drawn yet.
+		}
+
 		if (!spec || !spec->ok) {
 			WARN_PRINT_ONCE("shader failed to compile, unable to bind shader.");
 			return false;
@@ -235,6 +248,13 @@ protected:
 	virtual void _init() = 0;
 
 public:
+	// web-tuning: on the web, with KHR_parallel_shader_compile, compile this shader's
+	// programs in the background instead of waiting (the page froze up to a second per
+	// program on phones). Until a program is ready, what uses it isn't drawn.
+	void set_parallel_compile(bool p_enable);
+	// web-tuning: how many programs are compiling in the background right now.
+	static int get_compiling_count() { return compiling_count; }
+
 	RID version_create();
 
 	void version_set_code(RID p_version, const HashMap<String, String> &p_code, const String &p_uniforms, const String &p_vertex_globals, const String &p_fragment_globals, const Vector<String> &p_custom_defines, const LocalVector<ShaderGLES3::TextureUniformData> &p_texture_uniforms, bool p_initialize = false);

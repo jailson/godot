@@ -3683,7 +3683,7 @@ void RasterizerSceneGLES3::_render_list_template(RenderListParameters *p_params,
 			if (prev_shader != shader || prev_variant != instance_variant || spec_constants != prev_spec_constants) {
 				bool success = material_storage->shaders.scene_shader.version_bind_shader(shader->version, instance_variant, spec_constants);
 				if (!success) {
-					break;
+					continue; // web-tuning: (was `break`) skip just this one: its shader may still be compiling in the background.
 				}
 
 				float opaque_prepass_threshold = 0.0;
@@ -4616,6 +4616,8 @@ RasterizerSceneGLES3::RasterizerSceneGLES3() {
 		material_storage->shaders.scene_shader.initialize(global_defines);
 		scene_globals.shader_default_version = material_storage->shaders.scene_shader.version_create();
 		material_storage->shaders.scene_shader.version_bind_shader(scene_globals.shader_default_version, SceneShaderGLES3::MODE_COLOR);
+		// web-tuning: the 3D materials' programs (the big ones) compile in the background on the web.
+		material_storage->shaders.scene_shader.set_parallel_compile(GLOBAL_DEF("rendering/gl_compatibility/parallel_shader_compile", true));
 	}
 
 	{

@@ -32,6 +32,7 @@
 
 #ifdef GLES3_ENABLED
 
+#include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
 #include "core/string/string_builder.h"
 #include "drivers/gles3/rasterizer_util_gles3.h"
@@ -322,7 +323,10 @@ void ShaderGLES3::_compile_specialization(Version::Specialization &spec, uint32_
 		glShaderSource(spec.vert_id, 1, &cstr, &cstr_len);
 		glCompileShader(spec.vert_id);
 
-		glGetShaderiv(spec.vert_id, GL_COMPILE_STATUS, &status);
+		status = GL_TRUE;
+		if (!parallel_compile) { // web-tuning: in the background, checked once the program is ready
+			glGetShaderiv(spec.vert_id, GL_COMPILE_STATUS, &status);
+		}
 		if (status == GL_FALSE) {
 			GLsizei iloglen;
 			glGetShaderiv(spec.vert_id, GL_INFO_LOG_LENGTH, &iloglen);
@@ -370,7 +374,10 @@ void ShaderGLES3::_compile_specialization(Version::Specialization &spec, uint32_
 		glShaderSource(spec.frag_id, 1, &cstr, &cstr_len);
 		glCompileShader(spec.frag_id);
 
-		glGetShaderiv(spec.frag_id, GL_COMPILE_STATUS, &status);
+		status = GL_TRUE;
+		if (!parallel_compile) { // web-tuning: in the background, checked once the program is ready
+			glGetShaderiv(spec.frag_id, GL_COMPILE_STATUS, &status);
+		}
 		if (status == GL_FALSE) {
 			GLsizei iloglen;
 			glGetShaderiv(spec.frag_id, GL_INFO_LOG_LENGTH, &iloglen);
@@ -426,8 +433,67 @@ void ShaderGLES3::_compile_specialization(Version::Specialization &spec, uint32_
 
 	glLinkProgram(spec.id);
 
+	if (parallel_compile) {
+		// web-tuning: don't wait for it (asking now would freeze until it's done).
+		spec.compiling = true;
+		_count_compiling(1);
+		return;
+	}
+	_finish_specialization(spec, p_version);
+}
+
+#ifndef GL_COMPLETION_STATUS_KHR
+#define GL_COMPLETION_STATUS_KHR 0x91B1
+#endif
+
+int ShaderGLES3::compiling_count = 0;
+
+// (Scripts read it as ProjectSettings.get_meta("shaders_compiling", 0): to wait for them behind a curtain.)
+void ShaderGLES3::_count_compiling(int p_change) {
+	compiling_count += p_change;
+	ProjectSettings::get_singleton()->set_meta("shaders_compiling", compiling_count);
+}
+
+void ShaderGLES3::set_parallel_compile(bool p_enable) {
+#ifdef WEB_ENABLED
+	parallel_compile = p_enable && GLES3::Config::get_singleton() && GLES3::Config::get_singleton()->extensions.has("GL_KHR_parallel_shader_compile");
+#else
+	parallel_compile = false; // (native drivers have their own shader cache)
+#endif
+}
+
+bool ShaderGLES3::_specialization_ready(Version::Specialization &spec, Version *p_version) {
+	GLint done = GL_FALSE;
+	glGetProgramiv(spec.id, GL_COMPLETION_STATUS_KHR, &done);
+	if (done == GL_FALSE) {
+		return false;
+	}
+	spec.compiling = false;
+	_count_compiling(-1);
+	_finish_specialization(spec, p_version);
+	return spec.ok;
+}
+
+void ShaderGLES3::_finish_specialization(Version::Specialization &spec, Version *p_version) {
+	GLint status;
 	glGetProgramiv(spec.id, GL_LINK_STATUS, &status);
 	if (status == GL_FALSE) {
+		// (In the background the stages weren't checked: say which one failed.)
+		const GLuint stages[2] = { spec.vert_id, spec.frag_id };
+		for (int i = 0; i < 2; i++) {
+			GLint compiled = GL_TRUE;
+			glGetShaderiv(stages[i], GL_COMPILE_STATUS, &compiled);
+			if (compiled == GL_FALSE) {
+				GLsizei stage_log_length = 0;
+				glGetShaderiv(stages[i], GL_INFO_LOG_LENGTH, &stage_log_length);
+				if (stage_log_length > 0) {
+					char *stage_log = (char *)Memory::alloc_static_zeroed(stage_log_length + 1);
+					glGetShaderInfoLog(stages[i], stage_log_length, &stage_log_length, stage_log);
+					ERR_PRINT(name + (i == 0 ? ": Vertex" : ": Fragment") + " shader compilation failed:\n" + String(stage_log));
+					Memory::free_static(stage_log);
+				}
+			}
+		}
 		GLsizei iloglen;
 		glGetProgramiv(spec.id, GL_INFO_LOG_LENGTH, &iloglen);
 
@@ -689,6 +755,9 @@ void ShaderGLES3::_clear_version(Version *p_version) {
 
 	for (int i = 0; i < variant_count; i++) {
 		for (KeyValue<uint64_t, Version::Specialization> &kv : p_version->variants[i]) {
+			if (kv.value.compiling) {
+				_count_compiling(-1); // web-tuning
+			}
 			if (kv.value.id != 0) {
 				glDeleteShader(kv.value.vert_id);
 				glDeleteShader(kv.value.frag_id);
