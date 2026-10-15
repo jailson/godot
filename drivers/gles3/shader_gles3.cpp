@@ -478,6 +478,9 @@ void ShaderGLES3::_count_compiling(int p_change) {
 void ShaderGLES3::set_parallel_compile(bool p_enable) {
 #ifdef WEB_ENABLED
 	parallel_compile = p_enable && GLES3::Config::get_singleton() && GLES3::Config::get_singleton()->extensions.has("GL_KHR_parallel_shader_compile");
+	// (Even where the browser can't compile in the background, as on a Pixel 7's
+	// Chrome: compiling only the variants drawn is most of the saving.)
+	lazy_variants = p_enable;
 #else
 	parallel_compile = false; // (native drivers have their own shader cache)
 #endif
@@ -804,7 +807,7 @@ void ShaderGLES3::_initialize_version(Version *p_version) {
 	}
 	p_version->variants.reserve(variant_count);
 #ifdef WEB_ENABLED
-	if (parallel_compile) {
+	if (lazy_variants) {
 		// web-tuning: each variant is compiled when it's first drawn, not all of them now.
 		// A material drawn for the first time compiled every variant of its shader (color,
 		// depth, shadow, with and without instancing...), about ten programs, most never

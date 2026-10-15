@@ -114,6 +114,8 @@ private:
 	bool _specialization_ready(Version::Specialization &spec, Version *p_version);
 	// web-tuning: compile this shader's programs without waiting for them (see set_parallel_compile).
 	bool parallel_compile = false;
+	// web-tuning: compile each variant when it's first drawn (see _initialize_version).
+	bool lazy_variants = false;
 	static int compiling_count;
 	static void _count_compiling(int p_change);
 	// web-tuning: every program compiling in the background, looked at every frame
